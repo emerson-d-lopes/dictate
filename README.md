@@ -12,6 +12,17 @@ Built for myself. Published because it might be a useful starting point for some
 hold hotkey  →  record mic  →  release  →  transcribe locally  →  type into the focused app
 ```
 
+```mermaid
+flowchart LR
+    K["hold hotkey"] --> R["record mic"]
+    R --> U["release"]
+    U --> G{"long enough,<br/>and not silence?"}
+    G -- no --> X["ignore"]
+    G -- yes --> T["transcribe locally"]
+    T --> I["type into<br/>the focused app"]
+    I --> C["restore your<br/>previous clipboard"]
+```
+
 - **Fully local.** Speech recognition runs on your machine. Nothing is uploaded.
 - **Reacts to your voice.** The bubble's bars follow your actual microphone level, so silence is flat and speech moves them.
 - **Stays out of the way.** The bubble never takes focus, so the caret stays in the app you are dictating into.
@@ -29,15 +40,62 @@ autostart.rs  the HKCU Run key
 ui.rs         tray icon and the voice-reactive bubble
 ```
 
+Three threads, so the parts that must not block each other never do: the keyboard hook, the audio callback, and the UI message pump each run on their own, and the main loop coordinates them.
+
+```mermaid
+flowchart TD
+    subgraph hook["handy-keys thread"]
+        HK["keyboard hook<br/>press / release events"]
+    end
+    subgraph main["main thread"]
+        L["event loop (main.rs)"]
+        E["Engine: model held<br/>resident (transcribe-cpp)"]
+    end
+    subgraph audio["audio thread (audio.rs)"]
+        CAP["cpal capture callback<br/>downmix + level meter"]
+    end
+    subgraph uithread["UI thread (ui.rs)"]
+        WIN["tray icon + bubble<br/>Win32 message pump"]
+    end
+
+    HK -- "press / release" --> L
+    L -- "start / finish" --> CAP
+    CAP -- "live input level" --> WIN
+    CAP -- "16 kHz samples" --> L
+    L -- "recording / transcribing / hide" --> WIN
+    L --> E
+    E -- "text" --> L
+    L -- "inject" --> INJ["win-text-inject<br/>→ focused app"]
+```
+
 Almost everything is thin glue over a crate. `ui.rs` is the largest file because the tray icon and the bubble are raw Win32 GDI, which nothing does for you, and because the bubble has one hard requirement — it must never steal focus, or the text lands nowhere.
 
-| Job | Crate |
-|---|---|
-| Global hold-to-talk hotkey (incl. modifier-only bindings) | [`handy-keys`](https://crates.io/crates/handy-keys) |
-| Microphone capture | [`cpal`](https://crates.io/crates/cpal) |
-| Resampling to 16 kHz | [`rubato`](https://crates.io/crates/rubato) |
-| Speech recognition | [`transcribe-cpp`](https://crates.io/crates/transcribe-cpp) |
-| Text delivery | [`win-text-inject`](https://crates.io/crates/win-text-inject) |
+| Job | Crate | Notes |
+|---|---|---|
+| Global hold-to-talk hotkey (incl. modifier-only bindings) | [`handy-keys`](https://crates.io/crates/handy-keys) | reports press *and* release, which `RegisterHotKey` cannot |
+| Microphone capture | [`cpal`](https://crates.io/crates/cpal) | its callback also feeds the bubble's level meter |
+| Resampling to 16 kHz | [`rubato`](https://crates.io/crates/rubato) | anti-aliased, not naive decimation |
+| Speech recognition | [`transcribe-cpp`](https://crates.io/crates/transcribe-cpp) | ggml; loads the same GGUF models Handy uses |
+| Text delivery | [`win-text-inject`](https://crates.io/crates/win-text-inject) | built for exactly this; see below |
+
+### Why the text-delivery step is its own crate
+
+Pasting a transcript into whatever app has focus is the step every dictation tool gets subtly wrong, so it lives in a separate, tested crate. Everything it fixes is something this app hits *by construction*:
+
+```mermaid
+flowchart TD
+    A["transcript ready"] --> B{"focused window<br/>elevated?"}
+    B -- yes --> B1["leave on clipboard,<br/>prompt Ctrl+V<br/>(UIPI would eat it silently)"]
+    B -- no --> C["release the still-held<br/>hotkey modifier<br/>(or Ctrl+V becomes AltGr+V)"]
+    C --> D["publish text as a<br/>delayed-render promise<br/>+ privacy formats"]
+    D --> E["synthesize paste"]
+    E --> F["target reads the clipboard"]
+    F --> G["restore your previous<br/>clipboard, after the read"]
+```
+
+- The hotkey modifier is **held by construction** when this app pastes — it is a push-to-talk key you are still pressing. Sanitizing it is not an edge case here, it is every single press.
+- Because delivery is a paste, your clipboard would be **destroyed on every dictation** without the delayed-render restore. That is [Handy issue #502](https://github.com/cjpais/Handy/issues/502), and the fix is the whole reason this app does not have it.
+- Every sentence you speak passes through the clipboard, so without the four privacy opt-out formats it would land in **Windows clipboard history and cloud sync** — quietly breaking the "fully local" promise.
 
 ## Building
 
