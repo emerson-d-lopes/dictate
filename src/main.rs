@@ -144,22 +144,43 @@ fn finish(recording: Recording, config: &Config, engine: &mut Engine) -> Result<
     let target =
         win_text_inject::Target::foreground().context("no foreground window to type into")?;
 
-    let text = engine.transcribe(&samples, config)?;
+    // Transcription can fail transiently (a GPU backend hiccup), and the audio only exists in RAM
+    // right now, so retry once before giving up. Nothing is written to disk, so this is the only
+    // recovery window there is.
+    let text = match engine.transcribe(&samples, config) {
+        Ok(t) => t,
+        Err(first) => {
+            eprintln!("transcription failed ({first:#}), retrying once");
+            engine
+                .transcribe(&samples, config)
+                .context("transcription failed twice; the recording is lost")?
+        }
+    };
     let text = text.trim();
     if text.is_empty() {
         println!("nothing recognised");
         return Ok(());
     }
 
-    let outcome =
-        win_text_inject::inject(&target, text, Default::default()).context("delivering the text")?;
-
+    // From here the text is recognised, so it must never be lost to a delivery failure. If
+    // injection cannot type it, leave it on the clipboard instead. inject() already does this for
+    // elevated targets; this covers every other injection error the same way.
     let elapsed = started.elapsed().as_millis();
-    match outcome {
-        win_text_inject::Outcome::ClipboardOnly(reason) => {
+    match win_text_inject::inject(&target, text, Default::default()) {
+        Ok(win_text_inject::Outcome::ClipboardOnly(reason)) => {
             println!("[{elapsed} ms] on clipboard only ({reason:?}), press Ctrl+V");
         }
-        _ => println!("[{elapsed} ms] {text}"),
+        Ok(_) => println!("[{elapsed} ms] {text}"),
+        Err(e) => {
+            // Last resort: put it on the clipboard so a Ctrl+V recovers it.
+            match win_text_inject::clipboard::set_text_private(text) {
+                Ok(()) => println!("[{elapsed} ms] could not type ({e}); on clipboard, press Ctrl+V"),
+                Err(clip) => {
+                    // Both paths failed. Print it so at least it is visible to copy by hand.
+                    eprintln!("could not type or copy ({e}; {clip}). transcript:\n{text}");
+                }
+            }
+        }
     }
     Ok(())
 }
