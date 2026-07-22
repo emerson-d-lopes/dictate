@@ -6,6 +6,13 @@ description = "Personal push-to-talk dictation for Windows. Hold a key, speak, t
 license = "MIT OR Apache-2.0"
 publish = false
 
+[features]
+default = []
+# Opt-in GPU: builds ggml's Vulkan backend as loadable modules. The resulting
+# DLLs must sit next to the exe, and building needs the Vulkan SDK. The default
+# CPU build is self-contained and needs neither.
+vulkan-gpu = ["transcribe-cpp/vulkan", "transcribe-cpp/dynamic-backends"]
+
 [dependencies]
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

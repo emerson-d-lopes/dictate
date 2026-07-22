@@ -97,15 +97,62 @@ flowchart TD
 - Because delivery is a paste, your clipboard would be **destroyed on every dictation** without the delayed-render restore. That is [Handy issue #502](https://github.com/cjpais/Handy/issues/502), and the fix is the whole reason this app does not have it.
 - Every sentence you speak passes through the clipboard, so without the four privacy opt-out formats it would land in **Windows clipboard history and cloud sync** — quietly breaking the "fully local" promise.
 
+## Install and use
+
+You need two things in one folder: `dictate.exe` and a speech model. That is the whole install. The default build links the recognition engine into the executable, so there are no DLLs to ship and no runtime to install.
+
+### 1. Get `dictate.exe`
+
+Either grab a release binary, or build it (see [Building](#building) below). Put it in a folder you will keep, for example `C:\Users\you\Apps\dictate\`. Do not run it from a Downloads or temp folder if you plan to enable autostart, since those get cleaned.
+
+### 2. Get a model
+
+`dictate` uses GGUF speech models — the same ones [Handy](https://github.com/cjpais/Handy) uses. Download one `.gguf` file from [huggingface.co/handy-computer](https://huggingface.co/handy-computer) and put it next to the exe. Good starting points:
+
+| Model | Size | Notes |
+|---|---|---|
+| [`canary-180m-flash`](https://huggingface.co/handy-computer/canary-180m-flash-gguf) | ~200 MB | tiny and instant; English, German, Spanish, French |
+| [`parakeet-tdt-0.6b-v3`](https://huggingface.co/handy-computer/parakeet-tdt-0.6b-v3-gguf) | ~740 MB | more accurate; 25 European languages |
+
+Download the `Q8_0` file (best size/quality balance). Nothing downloads automatically — the model is yours, placed by you, and never fetched behind your back.
+
+### 3. First run
+
+Run `dictate.exe` once. It writes a commented `dictate.toml` next to itself and stops. Open that file, set `model` to your `.gguf` path, and run again:
+
+```toml
+hotkey = "CtrlLeft+WinLeft"
+model  = "C:/Users/you/Apps/dictate/canary-180m-flash-Q8_0.gguf"
+language = "en"
+```
+
+Forward slashes or escaped backslashes both work in the path.
+
+### 4. Dictate
+
+Hold the hotkey, speak, release. A small bubble appears bottom-center and its bars follow your voice. The text lands wherever your cursor was. Right-click the tray icon to open the config or exit.
+
+### Start on login
+
+Set `autostart = true` in `dictate.toml` and restart it once. It writes an entry under `HKCU\...\Run` pointing at wherever the exe currently lives, and re-asserts it on every launch. Set it back to `false` and restart to remove the entry. This is why the exe should live in a permanent folder before you enable it.
+
 ## Building
 
-Needs the Rust MSVC toolchain, and — because `transcribe-cpp` compiles a ggml backend — CMake, the MSVC C++ build tools, and the Vulkan SDK (for the GPU backend; CPU-only builds do not need it).
+Needs the Rust MSVC toolchain, plus CMake and the MSVC C++ build tools, because `transcribe-cpp` compiles a ggml engine from source.
 
 ```
 cargo build --release
 ```
 
-The ggml backend DLLs must sit next to `dictate.exe`. They are produced by the `transcribe-cpp` build; copy them into the same directory as the binary.
+The result is a self-contained CPU build: `target/release/dictate.exe`, no DLLs. Canary 180M runs comfortably in real time on a modern CPU, so the GPU is not needed.
+
+**Optional GPU acceleration.** For a larger model on a machine with a GPU, build with the Vulkan backend:
+
+```
+cargo build --release --features vulkan-gpu
+```
+
+That produces loadable ggml backend DLLs; they must sit next to the exe, and building them also needs the Vulkan SDK installed. For most people the CPU build is simpler and fast enough.
 
 ## Configuration
 
