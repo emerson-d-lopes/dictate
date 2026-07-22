@@ -53,7 +53,7 @@ fn default_true() -> bool {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            hotkey: "CtrlRight".to_string(),
+            hotkey: "CtrlLeft+WinLeft".to_string(),
             model: PathBuf::from("model.gguf"),
             language: Some("en".to_string()),
             min_recording_ms: default_min_ms(),
@@ -97,8 +97,8 @@ const STARTER: &str = r#"# dictate configuration
 # Hold this to record. Released, it transcribes and types.
 # Modifier-only bindings work and are usually the most comfortable, because they
 # cannot collide with an application shortcut. Examples:
-#   "CtrlRight"   "AltRight"   "Ctrl+Space"   "F13"
-hotkey = "CtrlRight"
+#   "CtrlLeft+WinLeft"   "CtrlRight"   "AltRight"   "Ctrl+Space"   "F13"
+hotkey = "CtrlLeft+WinLeft"
 
 # Absolute path to a GGUF speech model.
 # Handy's models live under ~/.cache/huggingface/hub if you already have it installed.

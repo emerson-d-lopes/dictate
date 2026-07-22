@@ -114,8 +114,8 @@ On first run `dictate` writes a commented `dictate.toml` next to the executable 
 ```toml
 # Hold this to record. Modifier-only bindings work and are usually the most
 # comfortable, because they cannot collide with an application shortcut.
-#   "CtrlRight"   "AltRight"   "Ctrl+Space"   "F13"
-hotkey = "CtrlRight"
+#   "CtrlLeft+WinLeft"   "CtrlRight"   "AltRight"   "Ctrl+Space"   "F13"
+hotkey = "CtrlLeft+WinLeft"
 
 # Absolute path to a GGUF speech model. Any model transcribe-cpp supports works;
 # Parakeet and Canary are good CPU choices. Handy's models live under
