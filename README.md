@@ -124,9 +124,18 @@ Run `dictate.exe` once. It writes a commented `dictate.toml` next to itself and 
 hotkey = "CtrlLeft+WinLeft"
 model  = "C:/Users/you/Apps/dictate/canary-180m-flash-Q8_0.gguf"
 language = "en"
+
+# Optional. Keeps the first word from being clipped by buffering recent audio,
+# at the cost of holding the mic open (the Windows indicator stays lit). 0 = off.
+preroll_ms = 0
+
+# Optional. Literal, case-insensitive, whole-word fixes for names and jargon.
+replacements = [["kubernetes", "Kubernetes"], ["github", "GitHub"]]
 ```
 
 Forward slashes or escaped backslashes both work in the path.
+
+Leading and trailing silence is trimmed from every recording automatically, which improves accuracy and cuts latency; there is no setting for it.
 
 ### 4. Dictate
 

@@ -12,6 +12,7 @@
 mod audio;
 mod autostart;
 mod config;
+mod process;
 mod ui;
 
 use std::path::PathBuf;
@@ -83,33 +84,70 @@ fn run() -> Result<()> {
         .register(hotkey)
         .with_context(|| format!("registering {}", config.hotkey))?;
 
+    // Pre-roll mode keeps the mic open so the first word is never clipped. Off unless the config
+    // asks for it, because an always-open mic lights the Windows indicator (see the config).
+    let preroll = if config.preroll_ms > 0 {
+        match audio::PrerollMic::new(config.preroll_ms) {
+            Ok(m) => {
+                println!("  preroll: {} ms (mic stays open)", config.preroll_ms);
+                Some(m)
+            }
+            Err(e) => {
+                eprintln!("pre-roll mic unavailable ({e:#}); opening on keypress instead");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     println!("\nready. hold {} and speak.\n", config.hotkey);
 
-    let mut recording: Option<Recording> = None;
+    // Exactly one of these is active per press, depending on pre-roll mode.
+    let mut on_demand: Option<Recording> = None;
+    let mut preroll_active = false;
 
     while let Ok(event) = manager.recv() {
         match event.state {
             HotkeyState::Pressed => {
-                if recording.is_some() {
+                if on_demand.is_some() || preroll_active {
                     continue;
                 }
-                match Recording::start() {
-                    Ok(r) => {
-                        recording = Some(r);
+                match &preroll {
+                    Some(mic) => {
+                        mic.begin();
+                        preroll_active = true;
                         ui.recording();
                         print!("recording... ");
                         flush();
                     }
-                    Err(e) => {
-                        ui.hide();
-                        eprintln!("could not start recording: {e:#}");
-                    }
+                    None => match Recording::start() {
+                        Ok(r) => {
+                            on_demand = Some(r);
+                            ui.recording();
+                            print!("recording... ");
+                            flush();
+                        }
+                        Err(e) => {
+                            ui.hide();
+                            eprintln!("could not start recording: {e:#}");
+                        }
+                    },
                 }
             }
             HotkeyState::Released => {
-                let Some(r) = recording.take() else { continue };
+                let samples = match &preroll {
+                    Some(mic) if preroll_active => {
+                        preroll_active = false;
+                        mic.end()
+                    }
+                    _ => match on_demand.take() {
+                        Some(r) => r.finish(),
+                        None => continue,
+                    },
+                };
                 ui.transcribing();
-                let result = finish(r, &config, &mut engine);
+                let result = samples.and_then(|s| deliver(s, &config, &mut engine));
                 ui.hide();
                 if let Err(e) = result {
                     eprintln!("failed: {e:#}");
@@ -122,9 +160,8 @@ fn run() -> Result<()> {
 }
 
 /// Everything that happens between releasing the key and the text appearing.
-fn finish(recording: Recording, config: &Config, engine: &mut Engine) -> Result<()> {
+fn deliver(samples: Vec<f32>, config: &Config, engine: &mut Engine) -> Result<()> {
     let started = Instant::now();
-    let samples = recording.finish()?;
 
     let seconds = samples.len() as f32 / audio::TARGET_RATE as f32;
     if (seconds * 1000.0) < config.min_recording_ms as f32 {
@@ -139,6 +176,10 @@ fn finish(recording: Recording, config: &Config, engine: &mut Engine) -> Result<
         return Ok(());
     }
 
+    // Trim the dead air before and after speech: faster, and it keeps the model from hallucinating
+    // at the quiet edges.
+    let samples = process::trim_silence(&samples, audio::TARGET_RATE);
+
     // Capture the target after the key is released: whatever is focused now is what the user
     // meant to type into.
     let target =
@@ -147,7 +188,7 @@ fn finish(recording: Recording, config: &Config, engine: &mut Engine) -> Result<
     // Transcription can fail transiently (a GPU backend hiccup), and the audio only exists in RAM
     // right now, so retry once before giving up. Nothing is written to disk, so this is the only
     // recovery window there is.
-    let text = match engine.transcribe(&samples, config) {
+    let raw = match engine.transcribe(&samples, config) {
         Ok(t) => t,
         Err(first) => {
             eprintln!("transcription failed ({first:#}), retrying once");
@@ -156,7 +197,11 @@ fn finish(recording: Recording, config: &Config, engine: &mut Engine) -> Result<
                 .context("transcription failed twice; the recording is lost")?
         }
     };
-    let text = text.trim();
+
+    // Apply the user's literal fixes, then trim. Order matters: a rule may add or remove edge
+    // whitespace.
+    let fixed = process::apply_replacements(raw.trim(), &config.replacements);
+    let text = fixed.trim();
     if text.is_empty() {
         println!("nothing recognised");
         return Ok(());

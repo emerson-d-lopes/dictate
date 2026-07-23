@@ -40,6 +40,25 @@ pub struct Config {
     /// restarting is enough in either direction.
     #[serde(default)]
     pub autostart: bool,
+
+    /// Pre-roll, in milliseconds. Zero keeps the mic closed until you press the key, which clips
+    /// the first word if you start speaking immediately.
+    ///
+    /// Any value above zero keeps a rolling buffer of recent audio so the moment you press, the
+    /// last `preroll_ms` are already captured and the first word survives. The cost is real and
+    /// worth stating: the microphone stays open the whole time the app runs, so the Windows
+    /// microphone indicator stays lit. Off by default because this is a privacy-first tool.
+    #[serde(default)]
+    pub preroll_ms: u64,
+
+    /// Literal text replacements applied to every transcript, case-insensitively, on whole-word
+    /// boundaries. For fixing names, jargon, and identifiers the model mishears.
+    ///
+    /// Each entry is `["heard", "wanted"]`, e.g. `["kubernetes", "Kubernetes"]` or
+    /// `["k eight s", "k8s"]`. Deliberately literal, not fuzzy: a replacement you can read is a
+    /// replacement that cannot silently corrupt the rest of the sentence.
+    #[serde(default)]
+    pub replacements: Vec<[String; 2]>,
 }
 
 fn default_min_ms() -> u64 {
@@ -59,6 +78,8 @@ impl Default for Config {
             min_recording_ms: default_min_ms(),
             keep_model_loaded: true,
             autostart: false,
+            preroll_ms: 0,
+            replacements: Vec::new(),
         }
     }
 }
@@ -118,4 +139,15 @@ keep_model_loaded = true
 
 # Start with Windows. Toggling this and restarting is enough in either direction.
 autostart = false
+
+# Pre-roll in milliseconds. 0 opens the mic only while you hold the key.
+# A value like 400 keeps recent audio buffered so the first word is never clipped,
+# at the cost of holding the microphone open the whole time the app runs (the
+# Windows mic indicator stays lit). Off by default; this is a privacy-first tool.
+preroll_ms = 0
+
+# Literal text fixes applied to every transcript, case-insensitive, whole-word.
+# For names, jargon, and identifiers the model mishears. Examples:
+#   replacements = [["kubernetes", "Kubernetes"], ["k eight s", "k8s"]]
+replacements = []
 "#;
